@@ -145,7 +145,7 @@ if (-not $SkipMcpRegister) {
         $cfg.mcpServers | Add-Member -Force -NotePropertyName 'yahoo-finance' -NotePropertyValue ([PSCustomObject]@{
             type    = 'stdio'
             command = 'uvx'
-            args    = @('mcp-yahoo-finance')
+            args    = @('--with', 'lxml', 'mcp-yahoo-finance')
         })
 
         $cfg.mcpServers | Add-Member -Force -NotePropertyName 'sec-edgar' -NotePropertyValue ([PSCustomObject]@{

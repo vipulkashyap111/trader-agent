@@ -42,7 +42,7 @@ All personal data lives in a sibling folder (default: `..\trader-agent-private\`
 
 | Server | Purpose | Install |
 |--------|---------|---------|
-| `mcp-yahoo-finance` | Quotes, history, options chains, fundamentals, news | `uvx mcp-yahoo-finance` |
+| `mcp-yahoo-finance` | Quotes, history, options chains, fundamentals, news | `uvx --with lxml mcp-yahoo-finance` (lxml is needed for `get_earning_dates`) |
 | `sec-edgar-mcp` | 10-K/Q filings, insider Form 4 | `uvx --from git+https://github.com/stefanoamorelli/sec-edgar-mcp.git sec-edgar-mcp` |
 | `mcp-fred` | Macro data (rates, CPI, DXY, VIX) | `uvx mcp-fred` — requires free FRED API key |
 
