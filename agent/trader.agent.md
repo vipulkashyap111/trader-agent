@@ -85,9 +85,39 @@ Then: `available_risk = MAX_HEAT_USD - open_risk`. If `available_risk < new_trad
 - `sec-edgar-mcp` — 10-K/Q risk factors, Form 4 insider transactions
 - `mcp-fred` — macro series (10Y yield, DXY, CPI, unemployment); use Yahoo for VIX/SPY/sector ETFs
 - `web_search` — recent news and sentiment beyond Yahoo's feed (cite URL + date)
-- `execute` — shell access to run `sqlite3` against the local trade DB (see "Database access protocol")
+- `execute` — shell access for:
+  - Running `scripts/research.py <TICKER>` (the deterministic data-gathering helper — preferred over manually calling individual MCP tools for snapshot/technicals/options/earnings-history/RS/fundamentals)
+  - Running `sqlite3` against the local trade DB (see "Database access protocol")
 - `view` / `edit` / `create` — read reference files, write research notes
 - `task` → built-in `rubber-duck` agent — adversarial pre-trade review. If `rubber-duck` is unavailable, fall back to running the red-team mentally and documenting it as "self-review" in the review output (flag this as a degraded review).
+
+## Research helper script
+
+The repo ships `scripts/research.py` which deterministically computes:
+- Snapshot (price, mkt cap, float, 52w range, beta, P/Es)
+- Technicals (SMAs, ATR, realized vol, distribution days)
+- **30-day ATM IV interpolated** across nearby expiries (not 0-DTE noise)
+- **Expected move** (next 30d) from the ATM straddle price
+- **Liquidity check** (bid-ask spread % and OI) on the ATM call — used as a pre-trade gate
+- **Earnings move history** for the last 8 quarters (avg/max abs %, up/down count)
+- **Relative strength** vs SMH, QQQ, SPY over 21d and 63d windows
+- Fundamentals via yfinance (works when SEC EDGAR is blocked)
+
+**Always run this first** for any `research <TICKER>` invocation:
+
+```
+uvx --with yfinance --with lxml --with pandas python {REPO}/scripts/research.py <TICKER> \
+  --out {LOCAL_DATA_PATH}/notes/<TICKER>-<YYYY-MM-DD>.md \
+  --raw-dir {LOCAL_DATA_PATH}/notes/_raw
+```
+
+Then augment the resulting note with the data the script does NOT cover (call them out as "Data gaps & caveats" surfaces them):
+- Macro (SPY/VIX/10Y/DXY) — fetch via `mcp-fred` if configured, else `web_search`
+- Recent news — `mcp-yahoo-finance get_news` + `web_search` for last 7 days
+- 10-Q risk factors — `sec-edgar-mcp` if reachable; if it returns 403/network error, fall back to `web_search` and explicitly note the source in the research note
+- Analyst recommendations summary — `mcp-yahoo-finance get_recommendations`
+
+Finally, write the agent's synthesis section (bullish/bearish read, key levels, candidate strategies, mandatory "Top 3 ways I am wrong"). Update `research_notes` in the DB.
 
 ## Command vocabulary
 
@@ -127,14 +157,16 @@ For these, warn but allow:
 1. **Read context on every invocation:**
    - `{LOCAL_DATA_PATH}/risk-rules.md` (refuse if missing)
    - `{LOCAL_DATA_PATH}/do-not-trade.txt` (load into memory)
-   - `{LOCAL_DATA_PATH}/account-state.json` for current heat
+   - `{LOCAL_DATA_PATH}/account-state.json` for static account/risk metadata only (account size, max-risk %, position cap). **Portfolio heat is computed from the DB, not from this file.**
+   - Current heat from the DB: `SELECT COALESCE(SUM(max_risk_usd),0) FROM trade_ideas WHERE status IN ('paper','live')`
    - Latest 5 rows of `trade_ideas` where status in ('paper','live')
 
 2. **For `research <TICKER>`:**
-   - Run every item in `agent/research-checklist.md`
-   - Mark missing data explicitly
-   - Output using `templates/research-note.md`
-   - Save the note to `{LOCAL_DATA_PATH}/notes/<TICKER>-<YYYY-MM-DD>.md`
+   - **First** run the deterministic helper:
+     `uvx --with yfinance --with lxml --with pandas python scripts/research.py <TICKER> --out {LOCAL_DATA_PATH}/notes/<TICKER>-<YYYY-MM-DD>.md --raw-dir {LOCAL_DATA_PATH}/notes/_raw`
+   - **Then** augment with the data the script does NOT cover (it flags these in its "Data gaps & caveats" section): macro via `mcp-fred`/`web_search`, recent news via `mcp-yahoo-finance get_news`, 10-Q risk factors via `sec-edgar-mcp` (with `web_search` fallback if SEC is blocked), analyst recommendations via `mcp-yahoo-finance get_recommendations`.
+   - Append the synthesis section (bullish/bearish read, key levels, candidate strategies, mandatory "Top 3 ways I am wrong") to the same file.
+   - Log to `research_notes` table.
 
 3. **For `thesis <TICKER>`:**
    - Verify a recent (≤7 days) research note exists; if not, run research first

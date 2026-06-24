@@ -46,7 +46,29 @@ All personal data lives in a sibling folder (default: `..\trader-agent-private\`
 | `sec-edgar-mcp` | 10-K/Q filings, insider Form 4 | `uvx --from git+https://github.com/stefanoamorelli/sec-edgar-mcp.git sec-edgar-mcp` |
 | `mcp-fred` | Macro data (rates, CPI, DXY, VIX) | `uvx mcp-fred` — requires free FRED API key |
 
-⚠️ **All three are community-maintained.** Review their source before running. Yahoo's API is unofficial and may break. SEC EDGAR requires a User-Agent string identifying you (per SEC policy).
+⚠️ **All three are community-maintained.** Review their source before running. Yahoo's API is unofficial and may break. SEC EDGAR requires a User-Agent string identifying you (per SEC policy) and may be unreachable from some networks; the research helper script falls back to yfinance for SEC-derived data when this happens.
+
+## Research helper script
+
+The repo ships `scripts/research.py`, a deterministic Python helper that computes everything in the research checklist that can be derived from price/options/fundamentals data:
+
+- Snapshot, technicals (SMAs, ATR, realized vol, distribution days)
+- **30-day ATM IV interpolated** across nearby expiries (not noisy 0-DTE)
+- **Expected move** for the next 30 days from the ATM straddle price
+- **Liquidity check** on the ATM call (bid-ask spread + OI)
+- **Earnings move history** — avg/max ABS % move on the last 8 earnings prints
+- **Relative strength** vs SMH, QQQ, SPY over 21d and 63d
+- Fundamentals via yfinance (works when SEC EDGAR is blocked)
+
+Usage:
+
+```powershell
+uvx --with yfinance --with lxml --with pandas python scripts/research.py NVDA \
+  --out ..\trader-agent-private\notes\NVDA-$(Get-Date -Format yyyy-MM-dd).md \
+  --raw-dir ..\trader-agent-private\notes\_raw
+```
+
+The script does not gather macro (SPY/VIX/10Y/DXY), news, or 10-Q risk factors — those are the agent's job via the appropriate MCPs (and `web_search` as a fallback for SEC when the network blocks it).
 
 ## Quick start
 

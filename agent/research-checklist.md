@@ -33,16 +33,22 @@ Complete **every** section before producing a thesis. Mark items "unknown" or "d
 - Pre/post-market activity if relevant
 
 ## 4. Options (if the thesis involves options)
-- IV rank (current IV vs 1-year range)
+- **30-day ATM IV** (interpolated from nearby expiries — NOT the nearest expiry, which is noisy at 0-DTE)
+- IV rank (current IV vs 1-year range) — if not available from yfinance, note as data gap
 - IV vs HV (30-day): rich, fair, or cheap
 - Term structure of IV: contango or backwardation
 - 25-delta skew (put IV minus call IV)
-- Open interest concentration (top 3 strikes/expirations)
+- Open interest concentration (top 3 strikes/expirations, calls and puts)
+- **Expected move (next 30d) from ATM straddle price** — straddle ÷ stock_price
 - Days to next earnings (avoid pinning trades to earnings unless event-driven)
-- Bid/ask spread % of mid for the strikes you would actually trade
+- **Liquidity check on the strikes you would actually trade:**
+  - Bid/ask spread ≤ 1% of mid → PASS, else FAIL
+  - Open interest ≥ 500 contracts → PASS, else FAIL
+  - The `scripts/research.py` helper runs this check on the ATM call automatically; verify for any non-ATM strike you intend to use
 
 ## 5. Catalysts and sentiment
 - Next earnings date (confirmed or estimated)
+- **Earnings move history** — avg ABS % move on the last 8 earnings prints, up/down split. Sets baseline expectation for the next print and informs whether the implied move is rich or cheap.
 - Other known catalysts (product launch, FDA, conference, lockup expiry)
 - News last 7 days: sentiment (positive/neutral/negative), materiality (high/medium/low). Cite headlines.
 - Analyst rating changes last 30 days: upgrades/downgrades, price target revisions
@@ -54,7 +60,7 @@ Complete **every** section before producing a thesis. Mark items "unknown" or "d
 - VIX level and trend
 - 10Y Treasury yield level and trend (FRED: DGS10)
 - DXY level and trend (FRED: DTWEXBGS)
-- Relevant sector ETF (XLK for tech broad, SMH for semis, XLC for comms): relative strength vs SPY
+- **Relative strength of the ticker vs sector ETF and SPY over 21d and 63d** — concrete % difference, not vague "outperforming". The `scripts/research.py` helper computes this. RS turning negative is often the earliest sign of a regime change.
 - Fed meeting / CPI / NFP within next 7 days
 
 ## 7. Data gaps
