@@ -44,7 +44,9 @@ Complete **every** section before producing a thesis. Mark items "unknown" or "d
 - **Liquidity check on the strikes you would actually trade:**
   - Bid/ask spread ≤ 1% of mid → PASS, else FAIL
   - Open interest ≥ 500 contracts → PASS, else FAIL
-  - The `scripts/research.py` helper runs this check on the ATM call automatically; verify for any non-ATM strike you intend to use
+  - The research note's "Tradeable strike zone" section shows the range of strikes that pass on the primary expiry — use it to pre-screen
+  - **For vertical spreads:** the `check-spread` CLI subcommand verifies both legs and computes the estimated net debit/credit at mid. **Required gate before sizing any spread.**
+  - **Standard-monthly expiries (3rd Friday) almost always have better liquidity than weeklies.** The script flags this on the primary expiry; prefer monthlies for any multi-week position.
 
 ## 5. Catalysts and sentiment
 - Next earnings date (confirmed or estimated)

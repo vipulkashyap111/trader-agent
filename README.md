@@ -70,6 +70,16 @@ uvx --with yfinance --with lxml --with pandas python scripts/research.py NVDA \
 
 The script does not gather macro (SPY/VIX/10Y/DXY), news, or 10-Q risk factors — those are the agent's job via the appropriate MCPs (and `web_search` as a fallback for SEC when the network blocks it).
 
+### Verifying a specific spread before sizing
+
+Once you have a candidate vertical spread, run:
+
+```powershell
+uvx --with yfinance --with lxml --with pandas python scripts/research.py check-spread RDDT 2026-08-21 170 180 call
+```
+
+Output tells you each leg's bid/ask/spread%/OI and whether the whole spread passes the liquidity gate. The research note's "Tradeable strike zone" section is the pre-screen; `check-spread` is the authoritative check before sizing.
+
 ## Quick start
 
 ```powershell

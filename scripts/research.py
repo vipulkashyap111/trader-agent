@@ -50,6 +50,80 @@ def _safe(value: Any) -> Any:
     return value
 
 
+def _is_third_friday(date_obj: dt.date) -> bool:
+    """3rd-Friday monthly expiry (deepest-liquidity class).
+
+    Limitation: does NOT detect holiday-shifted monthlies (e.g. Thursday before Good Friday).
+    Reflected in the field name `primary_is_third_friday` (not generic "is_standard_monthly").
+    """
+    return date_obj.weekday() == 4 and 15 <= date_obj.day <= 21
+
+
+def _spread_pct_row(row) -> float | None:
+    bid = float(row["bid"]) if pd.notna(row.get("bid")) else math.nan
+    ask = float(row["ask"]) if pd.notna(row.get("ask")) else math.nan
+    if math.isnan(bid) or math.isnan(ask):
+        return None
+    if bid < 0 or ask < 0 or ask < bid:
+        return None  # crossed/invalid market
+    mid = (bid + ask) / 2
+    if mid <= 0:
+        return None
+    return round((ask - bid) / mid * 100, 2)
+
+
+def _classify_liquidity(spread_pct: float | None, oi: int) -> str:
+    """Tiered classification (PASS / MARGINAL / FAIL).
+
+    PASS: spread ≤ 1% AND OI ≥ 500 — trade-ready.
+    MARGINAL: spread 1–3% AND OI ≥ 500 — work limit orders, smaller size, user override required.
+    FAIL: anything worse — do not trade.
+    """
+    if spread_pct is None:
+        return "FAIL"
+    if spread_pct <= LIQUIDITY_MAX_SPREAD_PCT and oi >= LIQUIDITY_MIN_OI:
+        return "PASS"
+    if spread_pct <= 3.0 and oi >= LIQUIDITY_MIN_OI:
+        return "MARGINAL"
+    return "FAIL"
+
+
+def _liquid_strike_zone(df, last: float, side: str) -> dict:
+    """For a chain side, return strikes that pass the liquidity gate (PASS-tier only)."""
+    required = {"strike", "openInterest", "bid", "ask"}
+    if df.empty or not required.issubset(df.columns):
+        return {"strikes": [], "low": None, "high": None, "count": 0, "error": "missing strike/oi/bid/ask columns"}
+    d = df.dropna(subset=list(required)).copy()
+    if d.empty:
+        return {"strikes": [], "low": None, "high": None, "count": 0}
+    d["spread_pct"] = d.apply(_spread_pct_row, axis=1)
+    # Dedupe to first occurrence per strike (handles non-standard adjusted contracts)
+    d = d.drop_duplicates(subset=["strike"], keep="first")
+    liquid = d[
+        (d["openInterest"] >= LIQUIDITY_MIN_OI)
+        & (d["spread_pct"].notna())
+        & (d["spread_pct"] <= LIQUIDITY_MAX_SPREAD_PCT)
+    ].sort_values("strike")
+    if liquid.empty:
+        return {"strikes": [], "low": None, "high": None, "count": 0}
+    strikes = [
+        {"strike": float(r["strike"]), "oi": int(r["openInterest"]), "spread_pct": float(r["spread_pct"])}
+        for _, r in liquid.iterrows()
+    ]
+    # Detect non-contiguous gaps — count strikes between low and high that EXIST in the chain but failed
+    all_strikes_in_range = sorted(d[(d["strike"] >= strikes[0]["strike"]) & (d["strike"] <= strikes[-1]["strike"])]["strike"].unique())
+    has_gaps = len(all_strikes_in_range) > len(strikes)
+    return {
+        "strikes": strikes,
+        "low": strikes[0]["strike"],
+        "high": strikes[-1]["strike"],
+        "count": len(strikes),
+        "low_pct_from_spot": round((strikes[0]["strike"] / last - 1) * 100, 2),
+        "high_pct_from_spot": round((strikes[-1]["strike"] / last - 1) * 100, 2),
+        "has_gaps": has_gaps,
+    }
+
+
 def get_snapshot(t: yf.Ticker, hist) -> dict:
     info = t.info or {}
     closes = hist["Close"].tolist()
@@ -275,9 +349,15 @@ def get_options_snapshot(t: yf.Ticker, last: float) -> dict:
     if p25 is not None and c25 is not None:
         skew_25d = round(float(p25["impliedVolatility"]) - float(c25["impliedVolatility"]), 4)
 
+    primary_date = dt.datetime.strptime(primary["expiry"], "%Y-%m-%d").date()
+    is_third_friday = _is_third_friday(primary_date)
+    call_zone = _liquid_strike_zone(primary["calls"], last, "call")
+    put_zone = _liquid_strike_zone(primary["puts"], last, "put")
+
     return {
         "primary_expiry": primary["expiry"],
         "primary_dte": primary_dte,
+        "primary_is_third_friday": is_third_friday,
         "iv30_atm": round(iv30 * 100, 1) if iv30 == iv30 else None,  # NaN check
         "iv30_method": method,
         "expected_move_primary_pct": expected_move_primary_pct,
@@ -289,10 +369,140 @@ def get_options_snapshot(t: yf.Ticker, last: float) -> dict:
         "atm_call_oi": atm_call_oi,
         "atm_put_bid_ask_spread_pct": atm_put_spread,
         "liquidity_ok": liquidity_ok,
+        "tradeable_call_zone": call_zone,
+        "tradeable_put_zone": put_zone,
         "skew_25d_proxy": skew_25d,
         "top_call_oi": top_call_oi,
         "top_put_oi": top_put_oi,
         "n_expiries": len(expiries),
+        "all_expiries": list(expiries),
+    }
+
+
+def check_spread(ticker: str, expiry: str, long_strike: float, short_strike: float, right: str) -> dict:
+    """Per-leg liquidity check for a vertical spread the agent is considering.
+
+    `right` is 'call' or 'put'. Returns spread/OI for each leg + a verdict (PASS/MARGINAL/FAIL).
+    """
+    right = right.lower()
+    if right not in ("call", "put"):
+        return {"error": "right must be 'call' or 'put'"}
+    try:
+        expiry_date = dt.datetime.strptime(expiry, "%Y-%m-%d").date()
+    except ValueError:
+        return {"error": f"expiry {expiry} not in YYYY-MM-DD format"}
+    dte = (expiry_date - dt.date.today()).days
+    if dte <= 0:
+        return {"error": f"expiry {expiry} is not future-dated (DTE={dte})"}
+
+    t = yf.Ticker(ticker)
+    available = t.options or []
+    if expiry not in available:
+        return {"error": f"expiry {expiry} not in chain; available: {list(available)[:6]}..."}
+    try:
+        ch = t.option_chain(expiry)
+    except Exception as e:
+        return {"error": f"chain load failed: {e}"}
+
+    df = ch.calls if right == "call" else ch.puts
+    required = {"strike", "bid", "ask", "openInterest"}
+    if not required.issubset(df.columns):
+        return {"error": f"chain missing required columns: {required - set(df.columns)}"}
+    for col in ("strike", "bid", "ask", "lastPrice", "impliedVolatility", "openInterest", "volume"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["strike"])
+
+    def leg(strike: float) -> dict:
+        sub = df[(df["strike"] - strike).abs() < 0.001]
+        if sub.empty:
+            return {"strike": strike, "error": "strike not listed", "tier": "FAIL", "passes_gate": False}
+        if len(sub) > 1:
+            # Non-standard adjusted contracts can duplicate a strike. Use the highest-OI row.
+            sub = sub.sort_values("openInterest", ascending=False, na_position="last")
+        row = sub.iloc[0]
+        sp = _spread_pct_row(row)
+        oi = int(row["openInterest"]) if pd.notna(row.get("openInterest")) else 0
+        bid = float(row["bid"]) if pd.notna(row.get("bid")) else None
+        ask = float(row["ask"]) if pd.notna(row.get("ask")) else None
+        mid = round((bid + ask) / 2, 2) if (bid is not None and ask is not None and ask >= bid) else None
+        tier = _classify_liquidity(sp, oi)
+        return {
+            "strike": float(strike),
+            "bid": bid,
+            "ask": ask,
+            "mid": mid,
+            "spread_pct_of_mid": sp,
+            "open_interest": oi,
+            "tier": tier,
+            "passes_gate": tier == "PASS",
+            "duplicate_contracts": len(sub) > 1,
+        }
+
+    long_leg = leg(long_strike)
+    short_leg = leg(short_strike)
+    spread_width = abs(short_strike - long_strike)
+
+    # Estimate net at mid-of-mids
+    if long_leg.get("mid") is not None and short_leg.get("mid") is not None:
+        net = round(long_leg["mid"] - short_leg["mid"], 2)
+        net_label = "debit" if net > 0 else "credit"
+    else:
+        net = None
+        net_label = None
+
+    # Classify structure
+    structure = None
+    if right == "call":
+        if long_strike < short_strike:
+            structure = "bull_call_debit"
+        elif long_strike > short_strike:
+            structure = "bear_call_credit"
+    else:  # put
+        if long_strike > short_strike:
+            structure = "bear_put_debit"
+        elif long_strike < short_strike:
+            structure = "bull_put_credit"
+
+    # Validate spread economics
+    economics_warning = None
+    if net is not None and spread_width > 0:
+        if net_label == "debit" and not (0 < abs(net) < spread_width):
+            economics_warning = f"debit ${abs(net)} not in valid range (0, {spread_width}) — bad quotes"
+        if net_label == "credit" and not (0 < abs(net) < spread_width):
+            economics_warning = f"credit ${abs(net)} not in valid range (0, {spread_width}) — bad quotes"
+
+    # Verdict
+    long_tier = long_leg.get("tier", "FAIL")
+    short_tier = short_leg.get("tier", "FAIL")
+    worst = "FAIL" if "FAIL" in (long_tier, short_tier) else ("MARGINAL" if "MARGINAL" in (long_tier, short_tier) else "PASS")
+    if economics_warning:
+        worst = "FAIL"
+    verdict_text = {
+        "PASS": "TRADEABLE",
+        "MARGINAL": "MARGINAL — work limit orders, accept slippage, smaller size; user override required",
+        "FAIL": "FAIL — one or both legs miss the liquidity gate (or bad quote economics)",
+    }[worst]
+
+    return {
+        "ticker": ticker.upper(),
+        "expiry": expiry,
+        "dte": dte,
+        "is_third_friday": _is_third_friday(expiry_date),
+        "right": right,
+        "structure": structure,
+        "long_leg": long_leg,
+        "short_leg": short_leg,
+        "spread_width": spread_width,
+        "estimated_net_at_mid": net,
+        "net_label": net_label,
+        "economics_warning": economics_warning,
+        "tier": worst,
+        "verdict": verdict_text,
+        "thresholds": {
+            "pass": {"spread_pct": LIQUIDITY_MAX_SPREAD_PCT, "oi": LIQUIDITY_MIN_OI},
+            "marginal": {"spread_pct": 3.0, "oi": LIQUIDITY_MIN_OI},
+        },
     }
 
 
@@ -520,7 +730,8 @@ def render_markdown(data: dict) -> str:
     if "error" in opt:
         lines.append(f"- ERROR: {opt['error']}")
     else:
-        lines.append(f"- Primary chain: {opt['primary_expiry']} ({opt['primary_dte']} DTE)")
+        lines.append(f"- Primary chain: {opt['primary_expiry']} ({opt['primary_dte']} DTE) — "
+                     f"{'**3rd-Friday monthly**' if opt.get('primary_is_third_friday') else '⚠️ NOT a 3rd-Friday monthly (weekly/quarterly — typically thinner)'}")
         lines.append(f"- **30d ATM IV: {opt['iv30_atm']}%** ({opt['iv30_method']})" if opt.get("iv30_atm") is not None else "- 30d ATM IV: unavailable")
         em_primary = opt.get("expected_move_primary_pct")
         em_30 = opt.get("expected_move_30d_pct")
@@ -538,6 +749,24 @@ def render_markdown(data: dict) -> str:
                      f"spread {opt['atm_call_bid_ask_spread_pct']}% of mid, OI {opt['atm_call_oi']:,} "
                      f"→ **{'PASS' if opt['liquidity_ok'] else 'FAIL'}** "
                      f"(threshold: spread ≤{LIQUIDITY_MAX_SPREAD_PCT}%, OI ≥{LIQUIDITY_MIN_OI})")
+        # Tradeable strike zone
+        cz = opt.get("tradeable_call_zone") or {}
+        pz = opt.get("tradeable_put_zone") or {}
+        lines.append("")
+        lines.append("### Tradeable strike zone (primary expiry; OI ≥{} AND spread ≤{}%)".format(LIQUIDITY_MIN_OI, LIQUIDITY_MAX_SPREAD_PCT))
+        if cz.get("count"):
+            gap_note = " (⚠️ gaps — not a continuous range)" if cz.get("has_gaps") else ""
+            lines.append(f"- **Calls:** ${cz['low']:.2f} → ${cz['high']:.2f}  ({cz['count']} strikes; "
+                         f"{cz['low_pct_from_spot']:+.1f}% to {cz['high_pct_from_spot']:+.1f}% from spot){gap_note}")
+        else:
+            lines.append("- **Calls:** NO strikes pass the liquidity gate on this expiry. Try a 3rd-Friday monthly or skip options.")
+        if pz.get("count"):
+            gap_note = " (⚠️ gaps — not a continuous range)" if pz.get("has_gaps") else ""
+            lines.append(f"- **Puts:**  ${pz['low']:.2f} → ${pz['high']:.2f}  ({pz['count']} strikes; "
+                         f"{pz['low_pct_from_spot']:+.1f}% to {pz['high_pct_from_spot']:+.1f}% from spot){gap_note}")
+        else:
+            lines.append("- **Puts:** NO strikes pass the liquidity gate on this expiry.")
+        lines.append(f"- _Use `python scripts/research.py check-spread {data['ticker']} {opt['primary_expiry']} <long> <short> call|put` to verify a specific spread before sizing._")
         lines.append(f"- Total expiries listed: {opt['n_expiries']}")
 
     lines.append("")
@@ -595,30 +824,52 @@ def render_markdown(data: dict) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Trader-agent research helper")
-    ap.add_argument("ticker")
-    ap.add_argument("--json", action="store_true", help="Emit raw JSON instead of markdown")
-    ap.add_argument("--raw-dir", help="Also write raw JSON to this directory")
-    ap.add_argument("--out", help="Write rendered markdown to this file (default: stdout)")
-    args = ap.parse_args()
+    sub = ap.add_subparsers(dest="cmd")
 
-    # Force UTF-8 stdout so Unicode characters survive on Windows consoles
+    # Default subcommand: full research note (backwards compatible — also works without "research")
+    rp = sub.add_parser("research", help="Full research note for a ticker (default)")
+    rp.add_argument("ticker")
+    rp.add_argument("--json", action="store_true", help="Emit raw JSON instead of markdown")
+    rp.add_argument("--raw-dir", help="Also write raw JSON to this directory")
+    rp.add_argument("--out", help="Write rendered markdown to this file (default: stdout)")
+
+    # New: per-leg liquidity check for a vertical spread
+    cs = sub.add_parser("check-spread", help="Per-leg liquidity check for a vertical spread")
+    cs.add_argument("ticker")
+    cs.add_argument("expiry", help="YYYY-MM-DD")
+    cs.add_argument("long_strike", type=float)
+    cs.add_argument("short_strike", type=float)
+    cs.add_argument("right", choices=["call", "put"])
+    cs.add_argument("--json", action="store_true")
+
+    # Backwards-compat: if first arg looks like a ticker (no known subcommand), inject "research"
+    raw_argv = sys.argv[1:]
+    known_cmds = {"research", "check-spread", "-h", "--help"}
+    if raw_argv and raw_argv[0] not in known_cmds:
+        raw_argv = ["research"] + raw_argv
+
+    args = ap.parse_args(raw_argv)
+
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
 
-    data = gather(args.ticker)
+    if args.cmd == "check-spread":
+        result = check_spread(args.ticker, args.expiry, args.long_strike, args.short_strike, args.right)
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            _print_check_spread(result)
+        return 0 if "error" not in result else 1
 
+    # default: research
+    data = gather(args.ticker)
     if args.raw_dir:
         os.makedirs(args.raw_dir, exist_ok=True)
         with open(os.path.join(args.raw_dir, f"{args.ticker.upper()}-research-raw.json"), "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, default=str)
-
-    if args.json:
-        payload = json.dumps(data, indent=2, default=str)
-    else:
-        payload = render_markdown(data)
-
+    payload = json.dumps(data, indent=2, default=str) if args.json else render_markdown(data)
     if args.out:
         out_dir = os.path.dirname(args.out)
         if out_dir:
@@ -629,6 +880,28 @@ def main() -> int:
     else:
         print(payload)
     return 0
+
+
+def _print_check_spread(r: dict) -> None:
+    if "error" in r:
+        print(f"ERROR: {r['error']}")
+        return
+    expiry_kind = "3rd-Friday monthly" if r["is_third_friday"] else "NOT 3rd-Friday (weekly/quarterly)"
+    print(f"# Spread check: {r['ticker']} {r['expiry']} ({r['dte']} DTE, {expiry_kind})")
+    print(f"Structure: {r.get('structure')}")
+    print(f"Long  {r['right']} ${r['long_leg']['strike']}:  bid={r['long_leg'].get('bid')} ask={r['long_leg'].get('ask')} "
+          f"mid={r['long_leg'].get('mid')} spread={r['long_leg'].get('spread_pct_of_mid')}% OI={r['long_leg'].get('open_interest')}  "
+          f"→ {r['long_leg'].get('tier')}")
+    print(f"Short {r['right']} ${r['short_leg']['strike']}: bid={r['short_leg'].get('bid')} ask={r['short_leg'].get('ask')} "
+          f"mid={r['short_leg'].get('mid')} spread={r['short_leg'].get('spread_pct_of_mid')}% OI={r['short_leg'].get('open_interest')}  "
+          f"→ {r['short_leg'].get('tier')}")
+    print(f"Width: ${r['spread_width']}  Estimated net at mid: ${r['estimated_net_at_mid']} ({r['net_label']})")
+    if r.get("economics_warning"):
+        print(f"⚠️  {r['economics_warning']}")
+    print(f"Verdict: **{r['verdict']}**")
+    print(f"Tiers — PASS: spread ≤{r['thresholds']['pass']['spread_pct']}% AND OI ≥{r['thresholds']['pass']['oi']}.  "
+          f"MARGINAL: spread ≤{r['thresholds']['marginal']['spread_pct']}% AND OI ≥{r['thresholds']['marginal']['oi']}.  "
+          f"Else FAIL.")
 
 
 if __name__ == "__main__":

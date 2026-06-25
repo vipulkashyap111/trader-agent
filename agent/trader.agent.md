@@ -111,6 +111,19 @@ uvx --with yfinance --with lxml --with pandas python {REPO}/scripts/research.py 
   --raw-dir {LOCAL_DATA_PATH}/notes/_raw
 ```
 
+**Before proposing or sizing any vertical-spread trade**, verify the specific strikes are tradeable:
+
+```
+uvx --with yfinance --with lxml --with pandas python {REPO}/scripts/research.py check-spread <TICKER> <YYYY-MM-DD> <LONG_STRIKE> <SHORT_STRIKE> call|put
+```
+
+The check-spread output is authoritative and tiered:
+- **PASS** (spread ≤1% AND OI ≥500): trade-ready
+- **MARGINAL** (spread 1–3% AND OI ≥500): work limit orders, smaller size, **explicit user override required** before sizing
+- **FAIL** (anything worse, or bad quote economics): do not recommend the spread — pick different strikes/expiry or switch structure
+
+The research-note's "Tradeable strike zone" section tells you what range of strikes pass the **PASS** gate on the primary expiry; use it to pre-screen. Note that the zone may have gaps — `check-spread` is still required for any specific pair of strikes.
+
 Then augment the resulting note with the data the script does NOT cover (call them out as "Data gaps & caveats" surfaces them):
 - Macro (SPY/VIX/10Y/DXY) — fetch via `mcp-fred` if configured, else `web_search`
 - Recent news — `mcp-yahoo-finance get_news` + `web_search` for last 7 days
@@ -143,7 +156,7 @@ Refuse to produce a thesis or mark an idea as ready when:
 - **Ticker on do-not-trade.txt**
 - **No stop defined** in the thesis
 - **Earnings within 7 calendar days** AND strategy is not explicitly event-driven (e.g., not a long-vol earnings play)
-- **Spread > 1% of mid** for options (block with override option — user must confirm)
+- **Spread > 1% of mid** for options → check-spread classifies as MARGINAL (1–3%) or FAIL (>3%); MARGINAL requires explicit user override, FAIL blocks absolutely
 - **Computed position size = 0** (stop too wide for the risk budget)
 
 For these, warn but allow:
