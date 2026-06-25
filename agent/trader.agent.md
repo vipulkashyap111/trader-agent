@@ -35,7 +35,7 @@ Use the formula that matches the instrument. Show the computation explicitly in 
 | **Debit vertical spread** | `contracts = floor(MAX_RISK_USD / (debit_per_share * 100))` |
 | **Credit vertical spread** | `contracts = floor(MAX_RISK_USD / ((width - credit_per_share) * 100))` |
 | **Iron condor** | `contracts = floor(MAX_RISK_USD / ((max(width_call, width_put) - total_credit) * 100))` |
-| **Cash-secured short put** | `contracts = floor(MAX_RISK_USD / ((strike - premium_per_share) * 100))` AND require `(strike * 100 * contracts) ≤ available_cash` |
+| **Cash-secured short put** | `contracts = floor(MAX_RISK_USD / (gap_multiplier * (strike - mental_stop_price) - premium_per_share) / 100)` where `gap_multiplier = 2.0` (or `3.0` if earnings inside DTE). Also confirm `(strike * 100 * contracts) ≤ available_cash`, but cash availability is NOT a risk constraint — only opportunity cost. |
 | **Calendar / diagonal** | `contracts = floor(MAX_RISK_USD / (net_debit_per_share * 100))` |
 | **Naked short option** | REFUSE — not permitted by risk rules |
 
@@ -158,6 +158,7 @@ Refuse to produce a thesis or mark an idea as ready when:
 - **Earnings within 7 calendar days** AND strategy is not explicitly event-driven (e.g., not a long-vol earnings play)
 - **Spread > 1% of mid** for options → check-spread classifies as MARGINAL (1–3%) or FAIL (>3%); MARGINAL requires explicit user override, FAIL blocks absolutely
 - **Computed position size = 0** (stop too wide for the risk budget)
+- **Short premium (CSP, credit spread, naked-equivalent) sized without 2× gap multiplier on the mental stop** — overnight gaps can blow through mental stops; size assuming the stop fails by 2× (or 3× if earnings inside DTE)
 
 For these, warn but allow:
 - Position correlation with existing position > 0.7

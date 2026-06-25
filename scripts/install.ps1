@@ -34,9 +34,9 @@ Write-Host "Agent install:  $CopilotAgentsDir"
 Write-Host ""
 
 # --- Prompts ---
-$accountSize       = [double](Read-Default "Account size (USD)" "20000")
-$riskPct           = [double](Read-Default "Risk per trade (%)" "1.5")
-$maxHeatPct        = [double](Read-Default "Max portfolio heat (%)" "6")
+$accountSize       = [double](Read-Default "Account size (USD) — new-trades budget only, not total portfolio" "20000")
+$riskPct           = [double](Read-Default "Risk per trade (%)" "6.0")
+$maxHeatPct        = [double](Read-Default "Max portfolio heat (%)" "24")
 $maxOpenPositions  = [int](Read-Default "Max concurrent open positions" "5")
 $sectors           = Read-Default "Sectors of focus" "Tech (broad)"
 $instruments       = Read-Default "Instruments" "Stocks + Options"
