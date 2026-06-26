@@ -6,6 +6,14 @@
 ## Thesis
 *(1 sentence)*
 
+## Instrument
+- **Type:** stock | options *(pick exactly one — sizing math differs)*
+- **If options:** structure = long_call | long_put | bull_call_debit | bear_put_debit | credit_spread | iron_condor | csp | calendar
+- **Liquidity verified?** `python scripts/research.py check-spread ...` output pasted below if options:
+  ```
+  (paste check-spread verdict here, must be PASS or MARGINAL)
+  ```
+
 ## Setup
 - **Horizon:** swing | position
 - **Strategy:** *(reference strategy-playbook.md entry)*
@@ -15,15 +23,24 @@
 - **Time stop:**
 - **Invalidation:**
 
-## Position sizing
-> Local file only — do NOT echo dollars into chat unless user asks.
-- Instrument:
-- Sizing formula used: *(see agent prompt "Position sizing math")*
-- Inputs: entry=$X, stop=$Y (or premium=$P, width=$W, credit=$C as applicable)
-- **Computed size:** N shares / contracts
-- Risk on this trade: $Y  (must be ≤ MAX_RISK_USD)
-- Risk as % of account:
-- Risk as R-multiple = 1R (by definition)
+## Position sizing — STOCK
+> Fill ONLY if Instrument.Type = stock
+- Entry: $___
+- Stop: $___
+- Risk/share = entry − stop = $___
+- **Shares = floor(MAX_RISK_USD / risk_per_share) = ___**
+- Notional = shares × entry = $___  (___% of $20k new-trades budget)
+- Risk on this trade: $___ (must be ≤ $1,200)
+
+## Position sizing — OPTIONS
+> Fill ONLY if Instrument.Type = options
+- Structure: ___
+- Per-contract risk (max loss): $___
+- **Contracts = floor(MAX_RISK_USD / per_contract_risk) = ___**
+- For CSP only: gap-adjusted risk = (strike − mental_stop) × gap_multiplier × 100 − premium  (gap_multiplier = 2× or 3× if earnings inside DTE)
+- Premium / debit / credit: $___
+- Risk on this trade: $___ (must be ≤ $1,200)
+- R:R = (target_value − entry_value) / risk = ___ : 1  (must be ≥ 1.5 : 1 absent explicit override)
 
 ## Expected value (rough)
 > Local file only — chat output uses R-multiples.

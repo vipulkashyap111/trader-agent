@@ -142,7 +142,8 @@ Users will invoke you via natural language; recognize these intents:
 | `thesis <TICKER> [strategy]` | Build thesis + strategy + entry/exit + position size using `templates/thesis.md`. Reference latest research note. Run rule-check. |
 | `review <idea_id>` | Pre-trade review: invoke rubber-duck agent for adversarial critique, recheck rules, confirm liquidity, check correlation with open positions. |
 | `log <details>` | Insert into `trade_ideas` or `trade_journal`. Confirm the row written. |
-| `watch <TICKER> <criteria>` | Add to `watchlist` table with trigger condition. |
+| `watch <TICKER> <criteria>` | Add to `watchlist` table with trigger condition. Must include `instrument_type` (stock/options/either), `direction` (bull/bear/neutral), `trigger_price`, and `invalidation_price`. |
+| `watchlist` | Show all rows from `watchlist` ordered by `priority`. Group by `direction` or `instrument_type` if user asks. |
 | `portfolio` | Query `trade_ideas` where status in ('paper','live'). Show open positions count, current portfolio heat as % of MAX_HEAT_USD, available risk as % remaining. Use percentages by default. |
 | `weekly` | Aggregate closed trades from last 7 days: win rate, average R, expectancy, max drawdown, top lessons. |
 | `screen <criteria>` | Scan candidate tickers (default universe: tech sector watchlist) for setups matching criteria. |

@@ -34,6 +34,7 @@ RS_WINDOWS_DAYS = (21, 63)  # ~1m, ~3m of trading days
 SECTOR_BENCHMARKS = {"SMH": "Semis ETF", "QQQ": "Nasdaq-100", "SPY": "S&P 500"}
 OPTIONS_TARGET_DTE = 30  # we want IV at this horizon
 OPTIONS_DTE_BAND = (21, 45)  # acceptable range for interpolation
+MONTHLY_PREFERENCE_TOLERANCE = 25  # prefer 3rd-Friday monthly within ± this many days of target DTE
 LIQUIDITY_MAX_SPREAD_PCT = 1.0
 LIQUIDITY_MIN_OI = 500
 
@@ -253,6 +254,36 @@ def get_options_snapshot(t: yf.Ticker, last: float) -> dict:
         except Exception:
             continue
 
+    # Additionally, ensure the nearest 3rd-Friday monthly within tolerance is loaded
+    # (since monthlies have much deeper liquidity than weeklies for the same DTE).
+    preferred_monthly_dte = None
+    monthly_candidates = []
+    for dte, exp in candidates:
+        if abs(dte - OPTIONS_TARGET_DTE) > MONTHLY_PREFERENCE_TOLERANCE:
+            continue
+        try:
+            edate = dt.datetime.strptime(exp, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if _is_third_friday(edate):
+            monthly_candidates.append((dte, exp))
+    if monthly_candidates:
+        m_dte, m_exp = min(monthly_candidates, key=lambda x: abs(x[0] - OPTIONS_TARGET_DTE))
+        if m_dte not in chains:
+            try:
+                ch = t.option_chain(m_exp)
+                calls = _coerce(ch.calls).dropna(subset=["strike", "impliedVolatility"])
+                puts = _coerce(ch.puts).dropna(subset=["strike", "impliedVolatility"])
+                if not calls.empty and not puts.empty:
+                    atm_call = calls.iloc[(calls["strike"] - last).abs().argmin()]
+                    atm_put = puts.iloc[(puts["strike"] - last).abs().argmin()]
+                    chains[m_dte] = {"expiry": m_exp, "atm_call": atm_call, "atm_put": atm_put, "calls": calls, "puts": puts}
+                    preferred_monthly_dte = m_dte
+            except Exception:
+                pass
+        else:
+            preferred_monthly_dte = m_dte
+
     if not chains:
         return {"error": "could not load any candidate chain"}
 
@@ -280,7 +311,13 @@ def get_options_snapshot(t: yf.Ticker, last: float) -> dict:
             iv30 = math.sqrt(var_target / target) if var_target > 0 else float("nan")
             method = f"variance-interp DTE {lo}->{hi}"
 
-    primary_dte = min(dtes, key=lambda d: abs(d - target))
+    # Primary chain selection: prefer 3rd-Friday monthly within tolerance, else nearest DTE.
+    if preferred_monthly_dte is not None and preferred_monthly_dte in chains:
+        primary_dte = preferred_monthly_dte
+        primary_selection_reason = f"3rd-Friday monthly preferred (within ±{MONTHLY_PREFERENCE_TOLERANCE}d of target)"
+    else:
+        primary_dte = min(dtes, key=lambda d: abs(d - target))
+        primary_selection_reason = "nearest DTE (no 3rd-Friday monthly within tolerance)"
     primary = chains[primary_dte]
     atm_call = primary["atm_call"]
     atm_put = primary["atm_put"]
@@ -358,6 +395,7 @@ def get_options_snapshot(t: yf.Ticker, last: float) -> dict:
         "primary_expiry": primary["expiry"],
         "primary_dte": primary_dte,
         "primary_is_third_friday": is_third_friday,
+        "primary_selection_reason": primary_selection_reason,
         "iv30_atm": round(iv30 * 100, 1) if iv30 == iv30 else None,  # NaN check
         "iv30_method": method,
         "expected_move_primary_pct": expected_move_primary_pct,
@@ -726,7 +764,26 @@ def render_markdown(data: dict) -> str:
     lines.append(f"- Distribution days last 25: {tch['distribution_days_25d']}")
 
     lines.append("")
-    lines.append("## Options")
+    lines.append("## Stock (instrument: shares)")
+    avg_vol = s.get('avg_volume_30d', 0) or 0
+    stock_liquid = avg_vol >= 500_000
+    last_px = s.get('last_close')
+    atr = tch.get('atr14')
+    lines.append(f"- Liquidity: avg vol 30d = {avg_vol:,} → {'✅ liquid (≥500k threshold)' if stock_liquid else '🚫 thin (<500k threshold) — consider skipping'}")
+    if atr and atr > 0 and last_px:
+        sample_shares = int(1200 // atr)
+        sample_notional = sample_shares * last_px
+        budget_pct = sample_notional / 20000 * 100
+        lines.append(f"- Sizing example at $1,200 max risk with 1-ATR stop (${atr}):")
+        lines.append(f"  - **{sample_shares} shares** × ${last_px} = ${sample_notional:,.0f} notional ({budget_pct:.1f}% of $20k new-trades budget)")
+        lines.append(f"- For your actual stop: `shares = floor(1200 / abs(entry - stop))`")
+        if sample_notional > 20000:
+            lines.append(f"  - ⚠️ At 1-ATR stop, notional EXCEEDS $20k budget — need wider stop OR fewer shares")
+    else:
+        lines.append("- Sizing: ATR or price unavailable")
+
+    lines.append("")
+    lines.append("## Options (instrument: contracts)")
     if "error" in opt:
         lines.append(f"- ERROR: {opt['error']}")
     else:
