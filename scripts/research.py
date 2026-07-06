@@ -826,6 +826,83 @@ def render_markdown(data: dict) -> str:
         lines.append(f"- _Use `python scripts/research.py check-spread {data['ticker']} {opt['primary_expiry']} <long> <short> call|put` to verify a specific spread before sizing._")
         lines.append(f"- Total expiries listed: {opt['n_expiries']}")
 
+    # --- Target reference points (data-driven anchors for setting price targets) ---
+    lines.append("")
+    lines.append("## Target reference points")
+    lines.append("> Data-driven anchors for setting price targets — no chart-pattern speculation. Pick the one your thesis supports.")
+    last_px = s.get('last_close')
+    hi_52 = s.get('high_52w')
+    lo_52 = s.get('low_52w')
+    if last_px and hi_52 and lo_52:
+        range_52 = hi_52 - lo_52
+        fib_236 = lo_52 + range_52 * 0.236
+        fib_382 = lo_52 + range_52 * 0.382
+        fib_500 = lo_52 + range_52 * 0.500
+        fib_618 = lo_52 + range_52 * 0.618
+        fib_786 = lo_52 + range_52 * 0.786
+        pos_in_range = (last_px - lo_52) / range_52 * 100 if range_52 > 0 else None
+
+        lines.append("")
+        lines.append(f"**Where price sits now:** ${last_px} is at the **{pos_in_range:.1f}%** level of the 52w range (${lo_52} → ${hi_52})")
+        lines.append("")
+        lines.append("**Fibonacci retracement levels of 52w range:**")
+        lines.append("| Level | Price | Above/Below current |")
+        lines.append("|---|---|---|")
+        for label, val in [("23.6%", fib_236), ("38.2%", fib_382), ("50.0%", fib_500), ("61.8%", fib_618), ("78.6%", fib_786), ("100% (52w high)", hi_52), ("0% (52w low)", lo_52)]:
+            diff = (val - last_px) / last_px * 100
+            direction = "🎯 above" if diff > 0 else "🛡 below"
+            lines.append(f"| {label} | ${val:.2f} | {direction} ({diff:+.1f}%) |")
+
+        # Options-implied bounds (only if primary expiry is known)
+        if "error" not in opt:
+            em_usd = opt.get("expected_move_primary_usd")
+            primary_dte = opt.get("primary_dte")
+            primary_exp = opt.get("primary_expiry")
+            if em_usd is not None and primary_dte:
+                upper_1s = last_px + em_usd
+                lower_1s = last_px - em_usd
+                lines.append("")
+                lines.append(f"**Options-implied bounds (from ATM straddle on {primary_exp}, {primary_dte} DTE):**")
+                lines.append(f"- **Upper 1σ:** ${upper_1s:.2f}  ({(upper_1s-last_px)/last_px*100:+.1f}% from spot) — most-defensible upper target for swing trades")
+                lines.append(f"- **Lower 1σ:** ${lower_1s:.2f}  ({(lower_1s-last_px)/last_px*100:+.1f}% from spot) — most-defensible downside/stop reference")
+                lines.append(f"- These are the **market-priced** 68%-probability bounds for {primary_exp}. Beat the market means take profit before the upper 1σ, or use it as your target only.")
+
+        # ATR-projected bound (uses realized vol; typically wider than option-implied for extended-DTE)
+        atr = tch.get('atr14')
+        if atr:
+            lines.append("")
+            lines.append("**ATR-based projections (14-day ATR = $%.2f):**" % atr)
+            for dte, label in [(20, "20d"), (46, "46d (typical monthly)"), (63, "63d (quarterly)")]:
+                proj = atr * math.sqrt(dte)
+                lines.append(f"- {label}: ±${proj:.2f} → ${last_px-proj:.2f} to ${last_px+proj:.2f}")
+
+        # Earnings-move-history projection
+        if "error" not in er:
+            avg_move = er.get("avg_abs_move_pct")
+            up_count = er.get("up_count", 0)
+            down_count = er.get("down_count", 0)
+            moves = er.get("moves", [])
+            if moves and avg_move:
+                up_moves = [m["move_pct"] for m in moves if m["move_pct"] > 0]
+                down_moves = [m["move_pct"] for m in moves if m["move_pct"] < 0]
+                avg_up = sum(up_moves) / len(up_moves) if up_moves else None
+                avg_down = sum(down_moves) / len(down_moves) if down_moves else None
+                lines.append("")
+                lines.append(f"**Earnings-move projections (based on last {er.get('n_quarters',0)} quarters):**")
+                lines.append(f"- Historical avg ABS: ±{avg_move:.2f}% → ${last_px*(1-avg_move/100):.2f} to ${last_px*(1+avg_move/100):.2f}")
+                if avg_up is not None:
+                    lines.append(f"- Avg UP quarter ({len(up_moves)}/{len(moves)}): {avg_up:+.2f}% → ${last_px*(1+avg_up/100):.2f} (if beats)")
+                if avg_down is not None:
+                    lines.append(f"- Avg DOWN quarter ({len(down_moves)}/{len(moves)}): {avg_down:+.2f}% → ${last_px*(1+avg_down/100):.2f} (if misses)")
+
+        lines.append("")
+        lines.append("**How to pick a target:**")
+        lines.append("1. **Options-implied 1σ** — most-defensible for 30-60d swing trades; reflects market-priced probability")
+        lines.append("2. **61.8% or 78.6% Fib** — classic technical levels; use only if aligned with option-implied bound")
+        lines.append("3. **Earnings-move projection** — for event-driven trades around a specific quarterly print")
+        lines.append("4. **ATR projection** — for volatility-based trades where realized > implied vol")
+        lines.append("5. **52w high/low** — extreme case; use as final target only, not initial")
+
     lines.append("")
     lines.append("## Earnings move history")
     if "error" in er:
