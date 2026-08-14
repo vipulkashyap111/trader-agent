@@ -150,6 +150,16 @@ Example (RDDT, 2026-07-06):
 
 Do NOT hand-wave "mid-move Fib extension" or similar. Every target must be traceable to at least one of the five frames, ideally two that converge.
 
+## No round-number substitution
+
+**Round-number "prettying" of a frame value is banned.** If 78.6% Fib = $507.22, the target is $507 (or $507.22), never $510. Round numbers are aesthetics, not a frame.
+
+If you want to sit *below* a frame level to increase fill probability (sell into resistance rather than through it), that is legitimate — but you must (a) label it as such and (b) quantify the cost. Example:
+
+> "78.6% Fib = $507.22. Placing GTC at $505 (−$2.22) to sit below the level for higher fill probability. Cost: $2.22/share (0.44%) if the level breaks cleanly and would have filled at $507."
+
+Do not "round up" a frame value to a round number without doing this analysis. Every dollar between the frame price and the order price is real money you're consciously trading for something (fill probability, or a specific tactical reason). If you can't name what you're getting, the rounding is a hand-wave.
+
 ## Post-earnings drift asymmetry
 
 For each earnings history, compute:
