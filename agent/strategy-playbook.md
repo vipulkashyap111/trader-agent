@@ -93,3 +93,76 @@ Mirror of D. Beware: indices/major tech often grind up; long puts have low expec
 - Pyramiding on a thesis you have not re-validated
 - "Cheap" far-OTM options as primary directional bet — almost always negative EV
 - Trading the same idea repeatedly after stop-outs ("revenge trading")
+
+---
+
+# Analytical conventions (updated 2026-08-14)
+
+## Setup-A/B/C naming convention (per-ticker)
+
+Every ticker analysis produces a numbered menu of setups. The letters map to **entry style**, not strategy — the strategy (long stock, spread, CSP) is a separate choice.
+
+| Letter | Meaning | Typical R:R |
+|---|---|---|
+| **A** | **Chase** — enter at current price, no wait | Usually < 2:1 → rejected |
+| **B** | **Pullback** — wait for retrace to SMA20/SMA50/support | Usually 2-3:1 → preferred |
+| **C** | **Breakout / reclaim** — enter on level break (52w high, prior pivot, SMA reclaim) | 1.5-2:1 → alt |
+| **D** | **Event-driven** — post-earnings drift, catalyst reaction | Asymmetric |
+
+Always list at least A + B on any watchlist candidate. C is optional. When rejecting A for R:R < floor, state the floor and the deficit explicitly.
+
+## R:R math and the 2:1 floor
+
+**Formula:** `R:R = (target − entry) / (entry − stop)` for longs, mirrored for shorts.
+
+**Break-even win rate:** `min_win_rate = 1 / (1 + R:R)`
+
+| R:R | Break-even win rate | Verdict |
+|---|---|---|
+| 1.0 : 1 | 50% | Skip — no edge from R:R alone |
+| 1.5 : 1 | 40% | **Floor** — explicit user override required to trade below |
+| 2.0 : 1 | 33.3% | Standard swing target |
+| 3.0 : 1 | 25% | Ideal — chase these |
+| 4.0 : 1+ | 20% | Rare — verify convergence of targets before believing |
+
+**Hard rule:** A thesis with R:R < 1.5:1 is blocked absent explicit user override. Setup A (chase) fails this rule for ~80% of names in a trend.
+
+## Target reference-points cheatsheet
+
+Every research note auto-computes five reference frames for setting price targets. Pick the one that matches the trade type:
+
+| Frame | Best for | Cautions |
+|---|---|---|
+| **1. Options-implied 1σ** (spot ± ATM straddle mid) | 30-60d swing trades. Market-priced 68% probability bound. **Default choice.** | Widens with vol; check DTE |
+| **2. Fibonacci 61.8% / 78.6% of 52w range** | Classic technical resistance | Only trust when it converges with (1) |
+| **3. Earnings-move projection** (spot × (1 + avg_up%)) | Event trades around a specific print | Requires ≥3 up quarters of history |
+| **4. ATR-projected 1σ over DTE** (spot ± ATR14 × √DTE) | Vol-based trades where realized > implied vol | Almost always widest — use as ceiling only |
+| **5. 52w high/low retest** | Extreme case; final target | Never use as initial target |
+
+## The convergence rule
+
+**When two independent reference frames land within 2% of each other, that price becomes a defensible target.** Cite both frames. Prefer that price over any single-frame estimate.
+
+Example (RDDT, 2026-07-06):
+- Options-implied 1σ upper (Aug 21): $248.38
+- 78.6% Fib of 52w range: $247.92
+- Δ = $0.46 (0.19%) → **converged. Use $248 as target.**
+
+Do NOT hand-wave "mid-move Fib extension" or similar. Every target must be traceable to at least one of the five frames, ideally two that converge.
+
+## Post-earnings drift asymmetry
+
+For each earnings history, compute:
+- `up_count / down_count` split of last 8 quarters
+- `avg_up_move_pct`, `avg_down_move_pct`
+
+**Asymmetric-long candidate** if: up_count ≥ 3 AND avg_up_move ≥ 2× |avg_down_move|. Example: RDDT (3 up avg +28%, 5 down avg -7%) → long-only skew.
+
+**Asymmetric-short candidate** if mirror. Example: NVDA 2026 (1 up +2.7%, 7 down -2.8%) → skip earnings; wait 24-48h post-print for the drift.
+
+For asymmetric names, prefer stock over options (IV crush kills long premium; short premium is uncapped tail risk). Enter D-style (event-driven) 1-2 days after the print, not before.
+
+## Known-liquidity classes (verified 2026-08-14)
+
+Track and update `agent/known-liquidity.md`. Options liquidity is stable per-ticker over months; recording it saves 2-3 calls per session.
+

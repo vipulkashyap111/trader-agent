@@ -71,12 +71,22 @@ CREATE VIEW IF NOT EXISTS open_positions AS
   WHERE i.status IN ('paper','live');
 
 CREATE TABLE IF NOT EXISTS watchlist (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  ticker        TEXT    NOT NULL,
-  criteria      TEXT,                          -- trigger condition in prose
-  added_at      TEXT    DEFAULT CURRENT_TIMESTAMP,
-  triggered_at  TEXT
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker              TEXT    NOT NULL,
+  criteria            TEXT,                          -- freeform trigger prose (kept for back-compat)
+  added_at            TEXT    DEFAULT CURRENT_TIMESTAMP,
+  triggered_at        TEXT,
+  -- structured fields (populated by `@trader watch`):
+  instrument_type     TEXT CHECK (instrument_type IN ('stock','options','either')),
+  direction           TEXT CHECK (direction IN ('bull','bear','neutral')),
+  priority            INTEGER,                       -- 1 = highest
+  trigger_price       REAL,
+  invalidation_price  REAL,
+  setup_name          TEXT,                          -- e.g. "Pullback to SMA20"
+  expected_rr         TEXT,                          -- "3.2:1", or dual-path prose
+  notes               TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_watchlist_priority ON watchlist(priority);
 
 CREATE TABLE IF NOT EXISTS do_not_trade (
   ticker     TEXT PRIMARY KEY,

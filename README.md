@@ -20,11 +20,14 @@ A Copilot CLI custom agent for **disciplined, data-driven research and journalin
 | Path | Purpose |
 |------|---------|
 | `agent/trader.agent.md` | Copilot CLI agent definition |
+| `agent/session-bootstrap.md` | Mandatory session-start protocol (reads, doctrine, state report) |
 | `agent/research-checklist.md` | The data-gathering checklist the agent must complete before any thesis |
-| `agent/strategy-playbook.md` | Common option/stock setups with entry/exit templates |
+| `agent/strategy-playbook.md` | Common setups + analytical conventions (Setup A/B/C, R:R math, target reference frames, convergence rule, post-earnings drift) |
+| `agent/known-liquidity.md` | Verified per-ticker options-liquidity classification (TRADEABLE / MARGINAL / STOCK-ONLY) |
+| `agent/watchlist-audit.md` | Protocol for "review watchlist" commands |
 | `agent/risk-rules.template.md` | Template — your real numbers go in a private file, not here |
 | `schema/init.sql` | SQLite schema for the local trade DB |
-| `templates/` | Markdown templates for research notes, theses, trade logs |
+| `templates/` | Markdown templates for research notes, theses, trade logs, retrospectives |
 | `examples/` | Sanitized sample outputs |
 | `scripts/install.ps1` | One-time setup: renders template with your numbers, creates DB, installs agent |
 | `scripts/verify-mcp.ps1` | Smoke-tests the MCP connections |
